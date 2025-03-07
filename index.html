@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>تخم اژدها - حمله مارها</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: radial-gradient(circle, #1e1e2f, #101022);
+      font-family: 'Tahoma', sans-serif;
+    }
+    /* ظرف علامت دلار */
+    #dollar-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+    }
+    .dollar {
+      position: absolute;
+      color: gold;
+      font-size: 24px;
+      font-weight: bold;
+      text-shadow: 0 0 5px gold;
+      animation: moveUp 1s forwards;
+    }
+    @keyframes moveUp {
+      from { opacity: 1; transform: translateY(0px); }
+      to { opacity: 0; transform: translateY(-100px); }
+    }
+    /* کنترل صدا */
+    #sound-control {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      cursor: pointer;
+      z-index: 10;
+    }
+    #sound-control img {
+      width: 30px;
+      height: 30px;
+    }
+    #progress-bar-container {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 50%;
+      height: 20px;
+      background-color: #333;
+      border-radius: 10px;
+      overflow: hidden;
+      z-index: 10;
+    }
+    #progress-bar {
+      height: 100%;
+      width: 0%;
+      background-color: #4caf50;
+      transition: width 0.3s ease;
+    }
+    /* نمایش امتیازها */
+    #score-container {
+      position: absolute;
+      top: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 20px;
+      font-size: 20px;
+      color: white;
+      z-index: 10;
+    }
+    #positive-score {
+      color: green;
+    }
+    #negative-score {
+      color: red;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/dat.gui/build/dat.gui.min.js"></script>
+</head>
+<body>
+  <div id="progress-bar-container">
+    <div id="progress-bar"></div>
+  </div>
+  <div id="score-container">
+    <div id="positive-score">امتیاز مثبت: 0</div>
+    <div id="negative-score">امتیاز منفی: 0</div>
+  </div>
+  <div id="dollar-container"></div>
+  <div id="sound-control" onclick="toggleSound()"> 
+    <div id="sound-icon">🔇</div>
+  </div>
+  <!-- موسیقی پس‌زمینه ترسناک (در صورت نیاز می‌توانید منبع صوتی را تغییر دهید) -->
+  <audio id="bg-audio" loop autoplay>
+    <source src="snakeecho-78798.mp3" type="audio/mp3">
+    مرورگر شما از این فرمت پشتیبانی نمی‌کند.
+  </audio>
+
+  <!-- بارگذاری three.js از CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+  <script>
+    // تنظیمات اولیه صحنه
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 1, 2000);
+    camera.position.set(0, 0, 800);
+    scene.add(camera);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // نورپردازی
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(100, 100, 200);
+    scene.add(directionalLight);
+
+    // بارگذاری تصویر تخم اژدها
+    const textureLoader = new THREE.TextureLoader();
+    const eggTexture = textureLoader.load('egg-image.png'); // جایگزین کنید با URL تصویر
+    eggTexture.wrapS = THREE.RepeatWrapping;
+    eggTexture.wrapT = THREE.RepeatWrapping;
+    eggTexture.minFilter = THREE.LinearMipMapLinearFilter;
+    eggTexture.magFilter = THREE.LinearFilter;
+    eggTexture.offset.set(-0.064, 0.17); // تنظیم موقعیت بافت
+    eggTexture.repeat.set(1, 1); // تنظیم اندازه بافت
+
+    const eggGeometry = new THREE.SphereGeometry(30, 32, 32);
+    eggGeometry.scale(1.6, 2.3, 15.2);
+    const eggMaterial = new THREE.MeshPhongMaterial({
+      map: eggTexture,
+      transparent: true,
+      side: THREE.DoubleSide
+    });
+    const egg = new THREE.Mesh(eggGeometry, eggMaterial);
+    egg.position.set(0, 0, 0);
+    scene.add(egg);
+
+    const gui = new dat.GUI();
+    const eggFolder = gui.addFolder("Dragon Egg");
+    eggFolder.add(egg.scale, "x", 0.5, 2).name("Scale X");
+    eggFolder.add(egg.scale, "y", 0.5, 2).name("Scale Y");
+    eggFolder.add(egg.scale, "z", 0.5, 20).name("Scale Z");
+    eggFolder.add(eggTexture.offset, "x", -1.0, 1.0).name("offset X");
+    eggFolder.add(eggTexture.offset, "y", 0.00, 1.0).name("offset Y");
+    eggFolder.add(eggTexture.repeat, "x", 1, 100).name("repeat X");
+    eggFolder.add(eggTexture.repeat, "y", 1, 100).name("repeat Y");
+    eggFolder.open();
+
+    // آرایه‌های نگهدارنده مارها
+    let snakes = [];
+    let dyingSnakes = [];
+    const targetSnakeCount = 10; // تعداد مارهای موجود در صفحه
+    const maxSnakeCount = 100; // حداکثر تعداد مارها
+    let snakesKilled = 0; // تعداد مارهای حذف‌شده
+    let positiveScore = 0; // امتیاز مثبت
+    let negativeScore = 0; // امتیاز منفی
+    const clock = new THREE.Clock();
+
+    // تابع به‌روزرسانی امتیازها
+    function updateScores() {
+      document.getElementById('positive-score').textContent = `امتیاز مثبت: ${positiveScore}`;
+      document.getElementById('negative-score').textContent = `امتیاز منفی: ${negativeScore}`;
+    }
+
+    // تابع کمکی تولید عدد تصادفی
+    function rand(min, max) {
+      return Math.random() * (max - min) + min;
+    }
+
+    // تابع ایجاد بافت مار با استفاده از canvas (برای ایجاد خال و الگوهای ترسناک)
+    function createSnakeTexture(baseColor, spotColor) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 128;
+      canvas.height = 128;
+      const ctx = canvas.getContext('2d');
+      // پس‌زمینه با رنگ پایه
+      ctx.fillStyle = baseColor;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      // رسم خال‌های تصادفی
+      for (let i = 0; i < 10; i++) {
+        const x = Math.random() * canvas.width;
+        const y = Math.random() * canvas.height;
+        const radius = Math.random() * 10 + 5;
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = spotColor;
+        ctx.fill();
+      }
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.needsUpdate = true;
+      return texture;
+    }
+
+    // تابع ایجاد منحنی مار با افکت نوسانی
+    function createSnakeCurve(snake, currentTime) {
+      const head = new THREE.Vector3().lerpVectors(snake.start, egg.position, snake.progress);
+      const dir = new THREE.Vector3().subVectors(egg.position, snake.start).normalize();
+      const perp = new THREE.Vector3(-dir.y, dir.x, 0);
+      const curve = new THREE.Curve();
+      curve.getPoint = function(t) {
+        const base = new THREE.Vector3().lerpVectors(snake.start, head, t);
+        // افکت نوسانی که نزدیکی به سر کاهش می‌یابد
+        const offset = Math.sin(t * snake.frequency * Math.PI * 2 + snake.phase + currentTime) * snake.amplitude * (1 - t);
+        base.addScaledVector(perp, offset);
+        return base;
+      };
+      curve.getTangent = function(t) {
+        const delta = 0.0001;
+        const p1 = curve.getPoint(t);
+        const p2 = curve.getPoint(Math.min(t + delta, 1));
+        return p2.sub(p1).normalize();
+      };
+      return curve;
+    }
+
+    // تابع ایجاد سر مار به شکل کبری با نیش‌های مشخص
+    function createSnakeHead() {
+      const headGroup = new THREE.Group();
+      // سر مار (با استفاده از یک کره‌ی کوچک که کمی فِلَت شده)
+      const headGeometry = new THREE.SphereGeometry(8, 16, 16);
+      const headMaterial = new THREE.MeshPhongMaterial({ color: 0xff0000, flatShading: true, transparent: true, opacity: 1 });
+      const headMesh = new THREE.Mesh(headGeometry, headMaterial);
+      headMesh.scale.set(1.5, 1, 1); // ایجاد شکل کبری
+      headGroup.add(headMesh);
+      // نیش‌ها (دو مخروط کوچک)
+      const fangGeometry = new THREE.ConeGeometry(1.5, 4, 8);
+      const fangMaterial = new THREE.MeshPhongMaterial({ color: 0xffffff, transparent: true, opacity: 1 });
+      const leftFang = new THREE.Mesh(fangGeometry, fangMaterial);
+      const rightFang = new THREE.Mesh(fangGeometry, fangMaterial);
+      leftFang.position.set(-2, 0, 8);
+      rightFang.position.set(2, 0, 8);
+      leftFang.rotation.x = Math.PI / 2;
+      rightFang.rotation.x = Math.PI / 2;
+      headGroup.add(leftFang);
+      headGroup.add(rightFang);
+      return headGroup;
+    }
+
+    // به‌روزرسانی هندسه مار (بدن و موقعیت سر)
+    function updateSnakeGeometry(snake, currentTime) {
+      const curve = createSnakeCurve(snake, currentTime);
+      const newGeometry = new THREE.TubeGeometry(curve, 20, 5, 8, false);
+      snake.bodyMesh.geometry.dispose();
+      snake.bodyMesh.geometry = newGeometry;
+      // به‌روزرسانی موقعیت سر: گرفتن آخرین نقطه منحنی
+      const headPosition = curve.getPoint(1);
+      snake.headGroup.position.copy(headPosition);
+      // تنظیم جهت سر بر اساس تانژانت منحنی
+      const tangent = curve.getTangent(1);
+      const angle = Math.atan2(tangent.y, tangent.x);
+      snake.headGroup.rotation.z = angle;
+    }
+
+    // ایجاد یک مار جدید با بدن و سر مشخص
+    function createSnake() {
+      const angle = rand(0, Math.PI * 2);
+      const radius = rand(400, 600);
+      const start = new THREE.Vector3(Math.cos(angle) * radius, Math.sin(angle) * radius, 0);
+      const snake = {
+        start: start,
+        progress: 0,
+        speed: rand(0.1, 0.3),
+        amplitude: rand(10, 30),
+        frequency: rand(2, 4),
+        phase: rand(0, Math.PI * 2),
+        dying: false,
+        pauseTime: 0 // زمان مکث روی تخم
+      };
+      const curve = createSnakeCurve(snake, 0);
+      const geometry = new THREE.TubeGeometry(curve, 20, 5, 8, false);
+      // انتخاب تصادفی رنگ‌ها برای بدن
+      const baseColors = ['#3a5f0b', '#5a2d0b', '#2b3a5f'];
+      const spotColors = ['#1a2f07', '#3a1f07', '#1a1a2f'];
+      const baseColor = baseColors[Math.floor(Math.random() * baseColors.length)];
+      const spotColor = spotColors[Math.floor(Math.random() * spotColors.length)];
+      const texture = createSnakeTexture(baseColor, spotColor);
+      const material = new THREE.MeshPhongMaterial({ map: texture, transparent: true, opacity: 1 });
+      const bodyMesh = new THREE.Mesh(geometry, material);
+      snake.bodyMesh = bodyMesh;
+      const headGroup = createSnakeHead();
+      snake.headGroup = headGroup;
+      const snakeGroup = new THREE.Group();
+      snakeGroup.add(bodyMesh);
+      snakeGroup.add(headGroup);
+      snake.group = snakeGroup;
+      scene.add(snakeGroup);
+      snakes.push(snake);
+    }
+
+    // واکنش به تغییر اندازه پنجره
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // ایجاد اولیه مارها
+    for (let i = 0; i < targetSnakeCount; i++) {
+      createSnake();
+    }
+
+    // حلقه انیمیشن
+    function animate() {
+      requestAnimationFrame(animate);
+      const delta = clock.getDelta();
+      const currentTime = performance.now() / 1000;
+
+      // به‌روزرسانی مارهای در حال حرکت
+      for (let i = snakes.length - 1; i >= 0; i--) {
+        const snake = snakes[i];
+        if (!snake.dying) {
+          if (snake.progress >= 1) {
+            // مار به تخم رسیده است
+            if (snake.pauseTime === 0) {
+              snake.pauseTime = currentTime; // زمان شروع مکث
+            } else if (currentTime - snake.pauseTime > 3) {
+              // اگر بیش از ۳ ثانیه مکث کرد، امتیاز منفی افزایش می‌یابد
+              negativeScore++;
+              updateScores();
+              snake.dying = true;
+              snake.dissolveStart = currentTime;
+              snake.dissolveDuration = 0.5;
+              dyingSnakes.push(snake);
+              snakes.splice(i, 1);
+            }
+          } else {
+            snake.progress = Math.min(snake.progress + snake.speed * delta, 1);
+            updateSnakeGeometry(snake, currentTime);
+          }
+        }
+      }
+
+      // به‌روزرسانی مارهایی که در حالت دود شدن قرار دارند
+      for (let i = dyingSnakes.length - 1; i >= 0; i--) {
+        const snake = dyingSnakes[i];
+        const elapsed = currentTime - snake.dissolveStart;
+        const duration = snake.dissolveDuration;
+        const newOpacity = 1 - (elapsed / duration);
+        snake.bodyMesh.material.opacity = newOpacity;
+        snake.headGroup.children.forEach(child => {
+          if(child.material) {
+            child.material.opacity = newOpacity;
+          }
+        });
+        snake.group.rotation.z += delta * 5;
+        updateSnakeGeometry(snake, currentTime);
+        if (elapsed >= duration) {
+          scene.remove(snake.group);
+          dyingSnakes.splice(i, 1);
+        }
+      }
+
+      // در صورت کاهش تعداد مارها، ایجاد مار جدید
+      if (snakes.length < targetSnakeCount && snakesKilled < maxSnakeCount) {
+        createSnake();
+      }
+
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    // تابع به‌روزرسانی نوار پیشرفت
+    function updateProgressBar(progress) {
+      const progressBar = document.getElementById('progress-bar');
+      progressBar.style.width = `${progress}%`;
+    }
+
+    // ایجاد افکت علامت دلار در محل رویداد
+    function showDollar(x, y) {
+      const dollar = document.createElement('div');
+      dollar.className = 'dollar';
+      dollar.style.left = x + 'px';
+      dollar.style.top = y + 'px';
+      dollar.textContent = '$';
+      document.getElementById('dollar-container').appendChild(dollar);
+      setTimeout(() => { dollar.remove(); }, 1000);
+    }
+
+    // مدیریت رویداد کلیک یا تاچ: حذف یک مار (با افکت دود شدن) و نمایش علامت دلار
+    function handleClick(event) {
+      let x, y;
+      if (event.touches && event.touches.length) {
+        x = event.touches[0].clientX;
+        y = event.touches[0].clientY;
+      } else {
+        x = event.clientX;
+        y = event.clientY;
+      }
+      showDollar(x, y);
+      if (snakes.length > 0) {
+        const snake = snakes.shift();
+        snake.dying = true;
+        snake.dissolveStart = performance.now() / 1000;
+        snake.dissolveDuration = 0.5;
+        dyingSnakes.push(snake);
+
+        // افزایش تعداد مارهای حذف‌شده و به‌روزرسانی نوار پیشرفت
+        snakesKilled++;
+        positiveScore++; // افزایش امتیاز مثبت
+        updateScores();
+        const progress = (snakesKilled / maxSnakeCount) * 100;
+        updateProgressBar(progress);
+      }
+    }
+    window.addEventListener('click', handleClick);
+    window.addEventListener('touchstart', (e) => { handleClick(e); });
+
+    // تابع کنترل صدا: قطع و وصل موسیقی پس‌زمینه
+    function toggleSound() {
+      const audio = document.getElementById('bg-audio');
+      const icon = document.getElementById('sound-icon');
+      if (audio.paused) {
+        audio.play();
+        icon.textContent = "🔈";
+      } else {
+        audio.pause();
+        icon.textContent = "🔇";
+      }
+    }
+  </script>
+</body>
+</html>
